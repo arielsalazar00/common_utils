@@ -2,7 +2,7 @@ import os
 import b2sdk.v2 as b2
 import duckdb
 
-def create_duckdb_with_b2_data(key_id, app_key, endpoint,bucket_name, prefix, db_path, table_name):
+def create_duckdb_with_b2_data(key_id, app_key, endpoint,bucket_name, prefix, db_path, table_name, schema):
     """
     Create a DuckDB database that directly queries data from a B2 bucket.
     
@@ -61,19 +61,38 @@ def create_duckdb_with_b2_data(key_id, app_key, endpoint,bucket_name, prefix, db
     
     # Create table from direct S3 URLs
     urls_str = ", ".join([f"'{url}'" for url in s3_urls])
-    create_table_sql = f"""
-    CREATE TABLE {table_name} AS 
-    SELECT * FROM parquet_scan([{urls_str}]);
-    """
     
-    print(f"Creating table '{table_name}' by directly querying {len(s3_urls)} files...")
-    try:
-        conn.execute(create_table_sql)
-        row_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-        print(f"Successfully created table '{table_name}' with {row_count} rows")
-    except Exception as e:
-        print(f"Error creating table directly: {str(e)}")
-        print("DuckDB may not be able to directly access the B2 bucket via S3. Consider using the download approach instead.")
+    if schema:
+        # First create an empty table with the specified schema
+        conn.execute(schema)
+        
+        # Then insert data from the Parquet files
+        insert_sql = f"""
+        INSERT INTO {table_name}
+        SELECT * FROM parquet_scan([{urls_str}]);
+        """
+        print(f"Creating table '{table_name}' with custom schema...")
+        try:
+            conn.execute(insert_sql)
+            row_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+            print(f"Successfully created table '{table_name}' with {row_count} rows")
+        except Exception as e:
+            print(f"Error creating table with custom schema: {str(e)}")
+    else:
+        # Use the original approach with schema inference
+        create_table_sql = f"""
+        CREATE OR REPLACE TABLE {table_name} AS 
+        SELECT * FROM parquet_scan([{urls_str}]);
+        """
+        print(f"Creating table '{table_name}' by directly querying {len(s3_urls)} files...")
+        try:
+            conn.execute(create_table_sql)
+            row_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+            print(f"Successfully created table '{table_name}' with {row_count} rows")
+        except Exception as e:
+            print(f"Error creating table directly: {str(e)}")
+            print("DuckDB may not be able to directly access the B2 bucket via S3. Consider using the download approach instead.")
+    
     
     # Close the connection
     conn.close()
